@@ -1,1 +1,5 @@
 org.geektimes.projects.user.web.controller.HelloWorldController
+org.geektimes.projects.user.web.controller.RegisterActionController
+org.geektimes.projects.user.web.controller.RegisterPageController
+org.geektimes.projects.user.web.controller.LoginPageController
+org.geektimes.projects.user.web.controller.SignInActionController
