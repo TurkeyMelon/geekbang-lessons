@@ -20,13 +20,13 @@
 </head>
 <body>
 	<div class="container">
-		<form class="form-signin">
+		<form class="form-signin" action="${pageContext.request.contextPath}/sign-in" method="post">
 			<h1 class="h3 mb-3 font-weight-normal">登录</h1>
-			<label for="inputEmail" class="sr-only">请输出电子邮件</label> <input
-				type="email" id="inputEmail" class="form-control"
-				placeholder="请输入电子邮件" required autofocus> <label
-				for="inputPassword" class="sr-only">Password</label> <input
-				type="password" id="inputPassword" class="form-control"
+			<label for="inputName" class="sr-only">用户名</label> <input
+				type="text" id="inputName" class="form-control" name="name"
+				placeholder="请输入用户名" required autofocus> <label
+				for="inputPassword" class="sr-only">密码</label> <input
+				type="password" id="inputPassword" class="form-control" name="password"
 				placeholder="请输入密码" required>
 			<div class="checkbox mb-3">
 				<label> <input type="checkbox" value="remember-me">

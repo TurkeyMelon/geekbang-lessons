@@ -4,11 +4,20 @@ import org.geektimes.function.ThrowableFunction;
 import org.geektimes.projects.user.domain.User;
 import org.geektimes.projects.user.sql.DBConnectionManager;
 
+import javax.naming.Context;
+import javax.naming.InitialContext;
+import javax.naming.NamingException;
+import javax.sql.DataSource;
 import java.beans.BeanInfo;
+import java.beans.IntrospectionException;
 import java.beans.Introspector;
 import java.beans.PropertyDescriptor;
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
-import java.sql.*;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.util.*;
 import java.util.function.Consumer;
 import java.util.logging.Level;
@@ -37,13 +46,40 @@ public class DatabaseUserRepository implements UserRepository {
         this.dbConnectionManager = dbConnectionManager;
     }
 
+    public DatabaseUserRepository() {
+        this.dbConnectionManager = new DBConnectionManager();
+    }
+
     private Connection getConnection() {
         return dbConnectionManager.getConnection();
     }
 
+    private void setUpConnection(){
+        if (dbConnectionManager.getConnection() == null) {
+            synchronized (DatabaseUserRepository.class){
+                if (dbConnectionManager.getConnection() == null) {
+                    try {
+                        Context initContext = new InitialContext();
+                        Context envContext = (Context)initContext.lookup("java:comp/env");
+                        DataSource dataSource = (DataSource)envContext.lookup("jdbc/UserPlatformDB") ;
+                        dbConnectionManager.setConnection(dataSource.getConnection());
+                    } catch (NamingException | SQLException e) {
+                        e.printStackTrace();
+                    }
+                }
+            }
+        }
+    }
+
     @Override
     public boolean save(User user) {
-        return false;
+        if (user == null) {
+            return false;
+        }
+        setUpConnection();
+        execute(INSERT_USER_DML_SQL, COMMON_EXCEPTION_HANDLER, user.getName(), user.getPassword(),
+                user.getEmail(), user.getPhoneNumber());
+        return true;
     }
 
     @Override
@@ -63,42 +99,24 @@ public class DatabaseUserRepository implements UserRepository {
 
     @Override
     public User getByNameAndPassword(String userName, String password) {
+        setUpConnection();
         return executeQuery("SELECT id,name,password,email,phoneNumber FROM users WHERE name=? and password=?",
                 resultSet -> {
-                    // TODO
-                    return new User();
+                    Collection<User> users = handleResultSetMapping(resultSet, User.class);
+                    if (users.size() > 1) {
+                        throw new RuntimeException("There's more than one result of users. Rows: " + users.size());
+                    }
+                    return users.size() == 1 ? users.iterator().next() : null;
                 }, COMMON_EXCEPTION_HANDLER, userName, password);
     }
 
     @Override
     public Collection<User> getAll() {
+        setUpConnection();
         return executeQuery("SELECT id,name,password,email,phoneNumber FROM users", resultSet -> {
             // BeanInfo -> IntrospectionException
-            BeanInfo userBeanInfo = Introspector.getBeanInfo(User.class, Object.class);
-            List<User> users = new ArrayList<>();
-            while (resultSet.next()) { // 如果存在并且游标滚动 // SQLException
-                User user = new User();
-                for (PropertyDescriptor propertyDescriptor : userBeanInfo.getPropertyDescriptors()) {
-                    String fieldName = propertyDescriptor.getName();
-                    Class fieldType = propertyDescriptor.getPropertyType();
-                    String methodName = resultSetMethodMappings.get(fieldType);
-                    // 可能存在映射关系（不过此处是相等的）
-                    String columnLabel = mapColumnLabel(fieldName);
-                    Method resultSetMethod = ResultSet.class.getMethod(methodName, String.class);
-                    // 通过放射调用 getXXX(String) 方法
-                    Object resultValue = resultSetMethod.invoke(resultSet, columnLabel);
-                    // 获取 User 类 Setter方法
-                    // PropertyDescriptor ReadMethod 等于 Getter 方法
-                    // PropertyDescriptor WriteMethod 等于 Setter 方法
-                    Method setterMethodFromUser = propertyDescriptor.getWriteMethod();
-                    // 以 id 为例，  user.setId(resultSet.getLong("id"));
-                    setterMethodFromUser.invoke(user, resultValue);
-                }
-            }
-            return users;
-        }, e -> {
-            // 异常处理
-        });
+            return handleResultSetMapping(resultSet, User.class);
+        }, COMMON_EXCEPTION_HANDLER);
     }
 
     /**
@@ -109,24 +127,9 @@ public class DatabaseUserRepository implements UserRepository {
      */
     protected <T> T executeQuery(String sql, ThrowableFunction<ResultSet, T> function,
                                  Consumer<Throwable> exceptionHandler, Object... args) {
-        Connection connection = getConnection();
+        setUpConnection();
         try {
-            PreparedStatement preparedStatement = connection.prepareStatement(sql);
-            for (int i = 0; i < args.length; i++) {
-                Object arg = args[i];
-                Class argType = arg.getClass();
-
-                Class wrapperType = wrapperToPrimitive(argType);
-
-                if (wrapperType == null) {
-                    wrapperType = argType;
-                }
-
-                // Boolean -> boolean
-                String methodName = preparedStatementMethodMappings.get(argType);
-                Method method = PreparedStatement.class.getMethod(methodName, wrapperType);
-                method.invoke(preparedStatement, i + 1, args);
-            }
+            PreparedStatement preparedStatement = buildPreparedStatement(sql, args);
             ResultSet resultSet = preparedStatement.executeQuery();
             // 返回一个 POJO List -> ResultSet -> POJO List
             // ResultSet -> T
@@ -137,6 +140,40 @@ public class DatabaseUserRepository implements UserRepository {
         return null;
     }
 
+    /**
+     * @param sql
+     * @param exceptionHandler
+     * @param args
+     */
+    protected void execute(String sql, Consumer<Throwable> exceptionHandler, Object... args) {
+        setUpConnection();
+        try {
+            PreparedStatement preparedStatement = buildPreparedStatement(sql, args);
+            preparedStatement.execute();
+        } catch (Throwable e) {
+            exceptionHandler.accept(e);
+        }
+    }
+
+    protected PreparedStatement buildPreparedStatement(String sql, Object... args) throws SQLException, NoSuchMethodException, InvocationTargetException, IllegalAccessException {
+        Connection connection = getConnection();
+        PreparedStatement preparedStatement = connection.prepareStatement(sql);
+        for (int i = 0; i < args.length; i++) {
+            Object arg = args[i];
+            Class argType = arg.getClass();
+
+            Class wrapperType = wrapperToPrimitive(argType);
+
+            if (wrapperType == null) {
+                wrapperType = argType;
+            }
+            // Boolean -> boolean
+            String methodName = preparedStatementMethodMappings.get(argType);
+            Method method = PreparedStatement.class.getMethod(methodName, wrapperType);
+            method.invoke(preparedStatement, i + 1, arg);
+        }
+        return preparedStatement;
+    }
 
     private static String mapColumnLabel(String fieldName) {
         return fieldName;
@@ -157,5 +194,30 @@ public class DatabaseUserRepository implements UserRepository {
         preparedStatementMethodMappings.put(String.class, "setString"); //
 
 
+    }
+
+    protected <T> Collection<T> handleResultSetMapping(ResultSet resultSet, Class<T> returnType) throws SQLException, IntrospectionException, NoSuchMethodException, InvocationTargetException, IllegalAccessException, InstantiationException {
+        // BeanInfo -> IntrospectionException
+        BeanInfo beanInfo = Introspector.getBeanInfo(returnType, Object.class);
+        List<T> pojoList = new ArrayList<>();
+        while (resultSet.next()) {
+            T instance = returnType.getConstructor().newInstance();
+            for (PropertyDescriptor propertyDescriptor : beanInfo.getPropertyDescriptors()) {
+                String fieldName = propertyDescriptor.getName();
+                Class fieldType = propertyDescriptor.getPropertyType();
+                String methodName = resultSetMethodMappings.get(fieldType);
+                // 可能存在映射关系（不过此处是相等的）
+                String columnLabel = mapColumnLabel(fieldName);
+                Method resultSetMethod = ResultSet.class.getMethod(methodName, String.class);
+                // 通过放射调用 getXXX(String) 方法
+                Object resultValue = resultSetMethod.invoke(resultSet, columnLabel);
+                // PropertyDescriptor ReadMethod 等于 Getter 方法
+                // PropertyDescriptor WriteMethod 等于 Setter 方法
+                Method setterMethodFromUser = propertyDescriptor.getWriteMethod();
+                setterMethodFromUser.invoke(instance, resultValue);
+            }
+            pojoList.add(instance);
+        }
+        return pojoList;
     }
 }
