@@ -59,16 +59,6 @@ public class User {
         this.phoneNumber = phoneNumber;
     }
 
-    public User() {
-    }
-
-    public User(String name, String password, String email, String phoneNumber) {
-        this.name = name;
-        this.password = password;
-        this.email = email;
-        this.phoneNumber = phoneNumber;
-    }
-
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;

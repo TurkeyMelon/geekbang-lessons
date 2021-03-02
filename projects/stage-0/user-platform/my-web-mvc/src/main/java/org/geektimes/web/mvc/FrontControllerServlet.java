@@ -44,7 +44,6 @@ public class FrontControllerServlet extends HttpServlet {
      *
      * @param servletConfig
      */
-    @Override
     public void init(ServletConfig servletConfig) {
         initHandleMethods();
     }
