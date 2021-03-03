@@ -4,10 +4,6 @@ import org.geektimes.function.ThrowableFunction;
 import org.geektimes.projects.user.domain.User;
 import org.geektimes.projects.user.sql.DBConnectionManager;
 
-import javax.naming.Context;
-import javax.naming.InitialContext;
-import javax.naming.NamingException;
-import javax.sql.DataSource;
 import java.beans.BeanInfo;
 import java.beans.IntrospectionException;
 import java.beans.Introspector;
@@ -27,12 +23,12 @@ import static org.apache.commons.lang.ClassUtils.wrapperToPrimitive;
 
 public class DatabaseUserRepository implements UserRepository {
 
-    private static Logger logger = Logger.getLogger(DatabaseUserRepository.class.getName());
+    private static final Logger logger = Logger.getLogger(DatabaseUserRepository.class.getName());
 
     /**
      * 通用处理方式
      */
-    private static Consumer<Throwable> COMMON_EXCEPTION_HANDLER = e -> logger.log(Level.SEVERE, e.getMessage());
+    private static final Consumer<Throwable> COMMON_EXCEPTION_HANDLER = e -> logger.log(Level.SEVERE, e.getMessage());
 
     public static final String INSERT_USER_DML_SQL =
             "INSERT INTO users(name,password,email,phoneNumber) VALUES " +
@@ -47,28 +43,11 @@ public class DatabaseUserRepository implements UserRepository {
     }
 
     public DatabaseUserRepository() {
-        this.dbConnectionManager = new DBConnectionManager();
+        this.dbConnectionManager = DBConnectionManager.getInstance();
     }
 
     private Connection getConnection() {
         return dbConnectionManager.getConnection();
-    }
-
-    private void setUpConnection(){
-        if (dbConnectionManager.getConnection() == null) {
-            synchronized (DatabaseUserRepository.class){
-                if (dbConnectionManager.getConnection() == null) {
-                    try {
-                        Context initContext = new InitialContext();
-                        Context envContext = (Context)initContext.lookup("java:comp/env");
-                        DataSource dataSource = (DataSource)envContext.lookup("jdbc/UserPlatformDB") ;
-                        dbConnectionManager.setConnection(dataSource.getConnection());
-                    } catch (NamingException | SQLException e) {
-                        e.printStackTrace();
-                    }
-                }
-            }
-        }
     }
 
     @Override
@@ -76,7 +55,6 @@ public class DatabaseUserRepository implements UserRepository {
         if (user == null) {
             return false;
         }
-        setUpConnection();
         execute(INSERT_USER_DML_SQL, COMMON_EXCEPTION_HANDLER, user.getName(), user.getPassword(),
                 user.getEmail(), user.getPhoneNumber());
         return true;
@@ -99,7 +77,6 @@ public class DatabaseUserRepository implements UserRepository {
 
     @Override
     public User getByNameAndPassword(String userName, String password) {
-        setUpConnection();
         return executeQuery("SELECT id,name,password,email,phoneNumber FROM users WHERE name=? and password=?",
                 resultSet -> {
                     Collection<User> users = handleResultSetMapping(resultSet, User.class);
@@ -112,7 +89,6 @@ public class DatabaseUserRepository implements UserRepository {
 
     @Override
     public Collection<User> getAll() {
-        setUpConnection();
         return executeQuery("SELECT id,name,password,email,phoneNumber FROM users", resultSet -> {
             // BeanInfo -> IntrospectionException
             return handleResultSetMapping(resultSet, User.class);
@@ -127,7 +103,6 @@ public class DatabaseUserRepository implements UserRepository {
      */
     protected <T> T executeQuery(String sql, ThrowableFunction<ResultSet, T> function,
                                  Consumer<Throwable> exceptionHandler, Object... args) {
-        setUpConnection();
         try {
             PreparedStatement preparedStatement = buildPreparedStatement(sql, args);
             ResultSet resultSet = preparedStatement.executeQuery();
@@ -146,7 +121,6 @@ public class DatabaseUserRepository implements UserRepository {
      * @param args
      */
     protected void execute(String sql, Consumer<Throwable> exceptionHandler, Object... args) {
-        setUpConnection();
         try {
             PreparedStatement preparedStatement = buildPreparedStatement(sql, args);
             preparedStatement.execute();
@@ -169,7 +143,7 @@ public class DatabaseUserRepository implements UserRepository {
             }
             // Boolean -> boolean
             String methodName = preparedStatementMethodMappings.get(argType);
-            Method method = PreparedStatement.class.getMethod(methodName, wrapperType);
+            Method method = PreparedStatement.class.getMethod(methodName, int.class, wrapperType);
             method.invoke(preparedStatement, i + 1, arg);
         }
         return preparedStatement;
@@ -192,8 +166,6 @@ public class DatabaseUserRepository implements UserRepository {
 
         preparedStatementMethodMappings.put(Long.class, "setLong"); // long
         preparedStatementMethodMappings.put(String.class, "setString"); //
-
-
     }
 
     protected <T> Collection<T> handleResultSetMapping(ResultSet resultSet, Class<T> returnType) throws SQLException, IntrospectionException, NoSuchMethodException, InvocationTargetException, IllegalAccessException, InstantiationException {

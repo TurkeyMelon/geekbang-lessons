@@ -14,6 +14,15 @@ public class DBConnectionManager {
 
     private Connection connection;
 
+    private static DBConnectionManager dbConnectionManager = new DBConnectionManager();
+
+    private DBConnectionManager() {
+    }
+
+    public static DBConnectionManager getInstance() {
+        return dbConnectionManager;
+    }
+
     public void setConnection(Connection connection) {
         this.connection = connection;
     }
